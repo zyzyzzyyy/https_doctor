@@ -5,7 +5,6 @@ HTTPS 证书检测工具 - wxPython GUI 主窗口
 
 import wx
 import wx.grid
-import wx.lib.agw.flatnotebook as flatnotebook
 import threading
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -42,27 +41,6 @@ class MainFrame(wx.Frame):
         menubar.Append(help_menu, "帮助")
 
         self.SetMenuBar(menubar)
-
-        # 工具栏
-        toolbar = self.CreateToolBar()
-        start_bmp = self._create_simple_bitmap(wx.GREEN)
-        export_bmp = self._create_simple_bitmap(wx.BLUE)
-        stop_bmp = self._create_simple_bitmap(wx.RED)
-        start_tool = toolbar.AddTool(wx.ID_ANY, "开始检测", start_bmp, shortHelp="开始检测")
-        export_tool = toolbar.AddTool(wx.ID_ANY, "导出报告", export_bmp, shortHelp="导出报告")
-        toolbar.AddSeparator()
-        stop_tool = toolbar.AddTool(wx.ID_ANY, "停止", stop_bmp, shortHelp="停止")
-        toolbar.Realize()
-
-        self.toolbar = toolbar
-        self.start_tool = start_tool
-        self.stop_tool = stop_tool
-        self.export_tool = export_tool
-
-        # 绑定工具栏事件
-        self.Bind(wx.EVT_TOOL, self._on_start_check, start_tool)
-        self.Bind(wx.EVT_TOOL, self._on_export, export_tool)
-        self.Bind(wx.EVT_TOOL, self._on_stop, stop_tool)
 
         # 绑定菜单事件
         self.Bind(wx.EVT_MENU, self._on_export, export_item)
@@ -126,10 +104,7 @@ class MainFrame(wx.Frame):
         detail_panel = wx.Panel(self)
         detail_sizer = wx.BoxSizer(wx.VERTICAL)
         detail_label = wx.StaticText(detail_panel, label="详情面板")
-        self.notebook = flatnotebook.FlatNotebook(
-            detail_panel,
-            style=flatnotebook.FNB_BOTTOM | flatnotebook.FNB_NO_X_BUTTON | flatnotebook.FNB_NO_NAV_BUTTONS
-        )
+        self.notebook = wx.Notebook(detail_panel)
 
         # 证书链页面
         self.cert_chain_page = wx.Panel(self.notebook)
@@ -188,15 +163,6 @@ class MainFrame(wx.Frame):
         main_sizer.Add(self.export_btn_panel, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
 
         self.SetSizer(main_sizer)
-
-    def _create_simple_bitmap(self, color) -> wx.Bitmap:
-        """创建简单的单色位图"""
-        bmp = wx.Bitmap(16, 16)
-        dc = wx.MemoryDC(bmp)
-        dc.SetBackground(wx.Brush(color))
-        dc.Clear()
-        dc.SelectObject(wx.NullBitmap)
-        return bmp
 
     def _on_start_check(self, event):
         """处理开始检测按钮点击"""
