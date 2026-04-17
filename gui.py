@@ -7,6 +7,7 @@ import wx
 import wx.grid
 import wx.lib.agw.flatnotebook as flatnotebook
 import threading
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import cert_checker
@@ -44,10 +45,13 @@ class MainFrame(wx.Frame):
 
         # 工具栏
         toolbar = self.CreateToolBar()
-        start_tool = toolbar.AddTool(wx.ID_ANY, "开始检测", wx.Bitmap(self._make_check_icon()))
-        export_tool = toolbar.AddTool(wx.ID_ANY, "导出报告", wx.Bitmap(self._make_export_icon()))
+        start_bmp = self._create_simple_bitmap(wx.GREEN)
+        export_bmp = self._create_simple_bitmap(wx.BLUE)
+        stop_bmp = self._create_simple_bitmap(wx.RED)
+        start_tool = toolbar.AddTool(wx.ID_ANY, "开始检测", start_bmp, shortHelp="开始检测")
+        export_tool = toolbar.AddTool(wx.ID_ANY, "导出报告", export_bmp, shortHelp="导出报告")
         toolbar.AddSeparator()
-        stop_tool = toolbar.AddTool(wx.ID_ANY, "停止", wx.Bitmap(self._make_stop_icon()))
+        stop_tool = toolbar.AddTool(wx.ID_ANY, "停止", stop_bmp, shortHelp="停止")
         toolbar.Realize()
 
         self.toolbar = toolbar
@@ -87,9 +91,10 @@ class MainFrame(wx.Frame):
         self.status_label = wx.StaticText(btn_panel, label="状态: 就绪")
         self.progress_label = wx.StaticText(btn_panel, label="0/0")
         btn_sizer.Add(self.start_btn, flag=wx.RIGHT, border=10)
-        btn_sizer.Add(self.stop_btn, flag=wx.RIGHT, border=10)
-        btn_sizer.Add(self.status_label, flag=wx.LEFT, border=10)
-        btn_sizer.Add(self.progress_label, flag=wx.LEFT, border=5)
+        btn_sizer.Add(self.stop_btn, flag=wx.RIGHT, border=20)
+        btn_sizer.Add(self.status_label, flag=wx.RIGHT, border=5)
+        self.progress_label.Wrap(60)
+        btn_sizer.Add(self.progress_label, flag=wx.RIGHT, border=10)
         btn_sizer.AddStretchSpacer()
         btn_panel.SetSizer(btn_sizer)
 
@@ -123,7 +128,7 @@ class MainFrame(wx.Frame):
         detail_label = wx.StaticText(detail_panel, label="详情面板")
         self.notebook = flatnotebook.FlatNotebook(
             detail_panel,
-            style=flatnotebook.FNB_BOTTOM | flatnotebook.FNB_NO_X_BUTTON
+            style=flatnotebook.FNB_BOTTOM | flatnotebook.FNB_NO_X_BUTTON | flatnotebook.FNB_NO_NAV_BUTTONS
         )
 
         # 证书链页面
@@ -184,43 +189,14 @@ class MainFrame(wx.Frame):
 
         self.SetSizer(main_sizer)
 
-    def _make_check_icon(self) -> wx.Image:
-        """创建勾选图标"""
-        img = wx.Image(16, 16)
-        img.Replace(0, 0, 0, 0, 0, 0)
-        dc = wx.MemoryDC()
-        bmp = wx.Bitmap(img)
-        dc.SelectObject(bmp)
-        dc.SetPen(wx.GREEN_PEN)
-        dc.SetBrush(wx.GREEN_BRUSH)
-        dc.DrawCircle(8, 8, 6)
-        dc.SetPen(wx.WHITE_PEN)
-        dc.DrawLine(4, 8, 7, 11)
-        dc.DrawLine(7, 11, 12, 5)
+    def _create_simple_bitmap(self, color) -> wx.Bitmap:
+        """创建简单的单色位图"""
+        bmp = wx.Bitmap(16, 16)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(color))
+        dc.Clear()
         dc.SelectObject(wx.NullBitmap)
-        return img
-
-    def _make_export_icon(self) -> wx.Image:
-        """创建导出图标"""
-        img = wx.Image(16, 16)
-        img.Replace(0, 0, 0, 0, 0, 0)
-        return img
-
-    def _make_stop_icon(self) -> wx.Image:
-        """创建停止图标"""
-        img = wx.Image(16, 16)
-        img.Replace(0, 0, 0, 0, 0, 0)
-        dc = wx.MemoryDC()
-        bmp = wx.Bitmap(img)
-        dc.SelectObject(bmp)
-        dc.SetPen(wx.RED_PEN)
-        dc.SetBrush(wx.RED_BRUSH)
-        dc.DrawCircle(8, 8, 6)
-        dc.SetPen(wx.WHITE_PEN)
-        dc.DrawLine(4, 4, 12, 12)
-        dc.DrawLine(12, 4, 4, 12)
-        dc.SelectObject(wx.NullBitmap)
-        return img
+        return bmp
 
     def _on_start_check(self, event):
         """处理开始检测按钮点击"""
@@ -242,11 +218,14 @@ class MainFrame(wx.Frame):
             wx.MessageBox("没有检测结果可导出", "提示", wx.OK | wx.ICON_WARNING)
             return
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"https_cert_report_{timestamp}.html"
+
         dlg = wx.FileDialog(
             self,
             wildcard="HTML files (*.html)|*.html",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
-            defaultFile="https_cert_report.html"
+            defaultFile=default_filename
         )
 
         if dlg.ShowModal() == wx.ID_OK:
