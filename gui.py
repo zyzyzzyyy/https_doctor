@@ -44,10 +44,10 @@ class MainFrame(wx.Frame):
 
         # 工具栏
         toolbar = self.CreateToolBar()
-        start_tool = toolbar.AddTool(wx.ID_ANY, "开始检测", wx.Bitmap.from_image(self._make_check_icon()))
-        export_tool = toolbar.AddTool(wx.ID_ANY, "导出报告", wx.Bitmap.from_image(self._make_export_icon()))
+        start_tool = toolbar.AddTool(wx.ID_ANY, "开始检测", wx.Bitmap(self._make_check_icon()))
+        export_tool = toolbar.AddTool(wx.ID_ANY, "导出报告", wx.Bitmap(self._make_export_icon()))
         toolbar.AddSeparator()
-        stop_tool = toolbar.AddTool(wx.ID_ANY, "停止", wx.Bitmap.from_image(self._make_stop_icon()))
+        stop_tool = toolbar.AddTool(wx.ID_ANY, "停止", wx.Bitmap(self._make_stop_icon()))
         toolbar.Realize()
 
         self.toolbar = toolbar
