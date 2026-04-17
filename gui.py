@@ -67,10 +67,12 @@ class MainFrame(wx.Frame):
         self.stop_btn = wx.Button(btn_panel, label="停止")
         self.stop_btn.Enable(False)
         self.status_label = wx.StaticText(btn_panel, label="状态: 就绪")
+        self.separator = wx.StaticLine(btn_panel, style=wx.LI_VERTICAL)
         self.progress_label = wx.StaticText(btn_panel, label="0/0")
         btn_sizer.Add(self.start_btn, flag=wx.RIGHT, border=10)
         btn_sizer.Add(self.stop_btn, flag=wx.RIGHT, border=20)
         btn_sizer.Add(self.status_label, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(self.separator, flag=wx.RIGHT | wx.EXPAND, border=10)
         self.progress_label.Wrap(60)
         btn_sizer.Add(self.progress_label, flag=wx.RIGHT, border=10)
         btn_sizer.AddStretchSpacer()
@@ -377,7 +379,7 @@ class MainFrame(wx.Frame):
         if not cert_chain:
             text = "证书链信息不可用"
             if error_message:
-                text += f"\n\n错误: {error_message}"
+                text += f"\n\n告警: {error_message}"
             self.cert_chain_text.SetLabel(text)
             return
 
@@ -397,7 +399,7 @@ class MainFrame(wx.Frame):
         lines.append(f"\n证书链状态: {chain_status}")
 
         if error_message:
-            lines.append(f"\n错误信息: {error_message}")
+            lines.append(f"\n告警: {error_message}")
 
         self.cert_chain_text.SetLabel("\n".join(lines))
 
