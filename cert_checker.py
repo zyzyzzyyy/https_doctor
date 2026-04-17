@@ -86,7 +86,7 @@ def check_certificate(url: str) -> dict:
                     cert_chain.append({
                         "type": "server",
                         "name": server_name,
-                        "status": "valid"
+                        "status": "ok"
                     })
 
                     # 尝试通过 AIA 获取中间证书
@@ -98,7 +98,7 @@ def check_certificate(url: str) -> dict:
                             cert_chain.append({
                                 "type": issuer_type,
                                 "name": issuer_name,
-                                "status": "valid"
+                                "status": "ok"
                             })
                         # 尝试获取根证书
                         root_issuer = _get_issuer_from_aia(issuer_cert, host)
@@ -109,7 +109,7 @@ def check_certificate(url: str) -> dict:
                                 cert_chain.append({
                                     "type": root_type,
                                     "name": root_name,
-                                    "status": "valid"
+                                    "status": "ok"
                                 })
                 except (AttributeError, Exception):
                     pass
@@ -119,7 +119,7 @@ def check_certificate(url: str) -> dict:
                     cert_chain.append({
                         "type": "server",
                         "name": _get_cert_name(cert),
-                        "status": "valid"
+                        "status": "ok"
                     })
 
                 # 确保至少包含服务器证书
@@ -127,7 +127,7 @@ def check_certificate(url: str) -> dict:
                     cert_chain.append({
                         "type": "server",
                         "name": _get_cert_name(cert),
-                        "status": "valid"
+                        "status": "ok"
                     })
 
                 # 检查证书链完整性
