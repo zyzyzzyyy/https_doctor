@@ -203,6 +203,8 @@ def _generate_tls_detail(r: Dict[str, Any]) -> str:
 
     version = tls.get("version", "未知")
     cipher = tls.get("cipher_suite", "未知")
+    if tls.get("cipher_weak"):
+        cipher = f"<span style='color:#e67e22'>⚠️ {cipher}</span>"
     key_exchange = tls.get("key_exchange", "未知")
 
     return f"""

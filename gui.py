@@ -409,9 +409,12 @@ class MainFrame(wx.Frame):
             self.tls_text.SetLabel("TLS 信息不可用")
             return
 
+        cipher = tls.get('cipher_suite', '未知')
+        if tls.get('cipher_weak'):
+            cipher = f"⚠️ {cipher}"
         lines = [
             f"版本: {tls.get('version', '未知')}",
-            f"加密套件: {tls.get('cipher_suite', '未知')}",
+            f"加密套件: {cipher}",
             f"密钥交换: {tls.get('key_exchange', '未知')}"
         ]
 

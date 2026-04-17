@@ -11,6 +11,7 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509 import ocsp
+from cryptography.hazmat.primitives.serialization import pkcs7
 
 
 def check_certificate(url: str) -> dict:
@@ -47,7 +48,8 @@ def check_certificate(url: str) -> dict:
         "tls": {  # TLS 信息
             "version": "",
             "cipher_suite": "",
-            "key_exchange": ""
+            "key_exchange": "",
+            "cipher_weak": False
         }
     }
 
@@ -122,14 +124,6 @@ def check_certificate(url: str) -> dict:
                         "status": "ok"
                     })
 
-                # 确保至少包含服务器证书
-                if not cert_chain:
-                    cert_chain.append({
-                        "type": "server",
-                        "name": _get_cert_name(cert),
-                        "status": "ok"
-                    })
-
                 # 检查证书链完整性
                 # 完整链应包含服务器证书以及根 CA 或中间 CA
                 has_root = any(c["type"] == "root" for c in cert_chain)
@@ -192,8 +186,15 @@ def check_certificate(url: str) -> dict:
                 result["tls"] = {
                     "version": tls_version,
                     "cipher_suite": cipher_suite[0] if cipher_suite else "",
-                    "key_exchange": _get_key_exchange_method(cipher_suite[0] if cipher_suite else "")
+                    "key_exchange": _get_key_exchange_method(cipher_suite[0] if cipher_suite else ""),
+                    "cipher_weak": _is_weak_cipher(cipher_suite[0] if cipher_suite else "")
                 }
+
+                # 弱加密套件也标记为警告
+                if result["tls"]["cipher_weak"]:
+                    result["status"] = "warning"
+                    if not result["error_message"]:
+                        result["error_message"] = "使用了不安全的加密套件"
 
                 # 检查 TLS 版本，过旧版本标记为警告
                 if tls_version in ("TLSv1", "TLSv1.1"):
@@ -204,18 +205,34 @@ def check_certificate(url: str) -> dict:
     except socket.gaierror as e:
         result["error_message"] = f"连接失败: 无法解析域名"
         result["status"] = "error"
+        result["cert_chain"] = []
+        result["cert_chain_complete"] = False
+        result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
+        result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except socket.timeout:
         result["error_message"] = f"连接失败: 连接超时"
         result["status"] = "error"
+        result["cert_chain"] = []
+        result["cert_chain_complete"] = False
+        result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
+        result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except ConnectionRefusedError:
         result["error_message"] = f"连接失败: 连接被拒绝"
         result["status"] = "error"
+        result["cert_chain"] = []
+        result["cert_chain_complete"] = False
+        result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
+        result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except ssl.SSLCertVerificationError as e:
         result["error_message"] = f"证书验证失败: {str(e)}"
         result["status"] = "error"
     except Exception as e:
         result["error_message"] = f"检测失败: {str(e)}"
         result["status"] = "error"
+        result["cert_chain"] = []
+        result["cert_chain_complete"] = False
+        result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
+        result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
 
     return result
 
@@ -449,43 +466,141 @@ def _get_issuer_from_aia(cert, host):
         issuer_host = parsed.netloc or parsed.path.split("/")[0]
         issuer_path = "/" + "/".join(parsed.path.split("/")[1:]) if parsed.path else "/"
 
+        # 解析端口
         if ":" in issuer_host:
             ih, ip = issuer_host.split(":")
-            with socket.create_connection((ih, int(ip)), timeout=5) as sock:
-                sock.sendall(f"GET {issuer_path} HTTP/1.1\r\nHost: {ih}\r\nConnection: close\r\n\r\n".encode())
-                response = sock.recv(65536)
+            ip = int(ip)
         else:
-            with socket.create_connection((issuer_host, 443), timeout=5) as sock:
+            ih = issuer_host
+            ip = 443 if parsed.scheme == "https" else 80
+
+        # 首先尝试 HTTPS
+        response = b""
+        if parsed.scheme == "https" or ip == 443:
+            try:
                 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
-                with context.wrap_socket(sock) as ssock:
-                    ssock.sendall(f"GET {issuer_path} HTTP/1.1\r\nHost: {issuer_host}\r\nConnection: close\r\n\r\n".encode())
-                    response = ssock.recv(65536)
+                with socket.create_connection((ih, ip), timeout=5) as sock:
+                    with context.wrap_socket(sock) as ssock:
+                        request = f"GET {issuer_path} HTTP/1.1\r\nHost: {ih}\r\nConnection: close\r\n\r\n"
+                        ssock.sendall(request.encode())
+                        response = _recv_all(ssock)
+            except Exception:
+                pass
 
-        # 从响应中提取证书（PEM 或 DER 格式）
-        if b"-----BEGIN CERTIFICATE-----" in response:
-            # PEM 格式
-            start = response.find(b"-----BEGIN CERTIFICATE-----")
-            end = response.find(b"-----END CERTIFICATE-----") + len("-----END CERTIFICATE-----")
-            cert_pem = response[start:end]
-            return x509.load_pem_x509_certificate(cert_pem, default_backend())
-        else:
-            # 尝试 DER 格式（application/pkix-cert）
-            # 跳过 HTTP header
-            header_end = response.find(b"\r\n\r\n")
-            if header_end >= 0:
-                body = response[header_end + 4:]
-                if body:
-                    try:
-                        return x509.load_der_x509_certificate(body, default_backend())
-                    except Exception:
-                        pass
+        # 如果 HTTPS 失败，尝试 HTTP
+        if not response:
+            try:
+                http_port = 80 if ip == 443 else ip
+                with socket.create_connection((ih, http_port), timeout=5) as sock:
+                    request = f"GET {issuer_path} HTTP/1.1\r\nHost: {ih}\r\nConnection: close\r\n\r\n"
+                    sock.sendall(request.encode())
+                    response = _recv_all(sock)
+            except Exception:
+                pass
+
+        # 解析证书
+        return _parse_cert_from_response(response)
 
     except Exception:
         pass
 
     return None
+
+
+def _recv_all(sock):
+    """接收套接字所有数据"""
+    response = b""
+    while True:
+        try:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            response += chunk
+            # 如果数据量较大且已找到证书结束标记，提前退出
+            if len(response) > 10000 and b"-----END CERTIFICATE-----" in response:
+                break
+        except Exception:
+            break
+    return response
+
+
+def _parse_cert_from_response(response):
+    """从 HTTP 响应中解析证书"""
+    if not response:
+        return None
+
+    # 跳过 HTTP header
+    header_end = response.find(b"\r\n\r\n")
+    if header_end >= 0:
+        body = response[header_end + 4:]
+    else:
+        body = response
+
+    # 检查是否为 PKCS#7 格式
+    if b"pkcs7" in body.lower() or body.startswith(b"0"):
+        certs = _parse_pkcs7(body)
+        if certs:
+            # 返回根证书（通常是最后一个）
+            return certs[-1]
+
+    # 查找 PEM 格式证书
+    start = body.find(b"-----BEGIN CERTIFICATE-----")
+    if start >= 0:
+        end = body.find(b"-----END CERTIFICATE-----")
+        if end >= 0:
+            end += len(b"-----END CERTIFICATE-----")
+            cert_pem = body[start:end]
+            try:
+                return x509.load_pem_x509_certificate(cert_pem, default_backend())
+            except Exception:
+                pass
+
+    # 尝试作为 DER 格式解析
+    if len(body) > 100 and b"-----BEGIN" not in body:
+        try:
+            return x509.load_der_x509_certificate(body, default_backend())
+        except Exception:
+            pass
+
+    return None
+
+
+def _parse_pkcs7(data):
+    """解析 PKCS#7 格式，返回证书列表"""
+    try:
+        # 尝试 PEM 格式
+        if b"-----BEGIN" in data:
+            certs = pkcs7.load_pem_pkcs7_certificates(data)
+            if certs:
+                return certs
+        # 尝试 DER 格式
+        certs = pkcs7.load_der_pkcs7_certificates(data)
+        return certs if certs else []
+    except Exception:
+        return []
+
+
+def _is_weak_cipher(cipher_suite):
+    """
+    判断加密套件是否为弱加密。
+
+    弱加密特征：无前向保密(CBC模式) 或 使用不安全算法(RC4/3DES/MD5)
+    """
+    if not cipher_suite:
+        return False
+    upper = cipher_suite.upper()
+    # 无前向保密：纯RSA密钥交换且为CBC模式
+    # 有前向保密的前缀：ECDHE, DHE, RSA-PSK, DHE-PSK
+    has_fs = any(p in upper for p in ["ECDHE-", "DHE-", "RSA-PSK", "DHE-PSK", "ECDHE-ECDSA"])
+    if not has_fs:
+        # 无前向保密的CBC模式套件均为弱加密
+        if "CBC" in upper or "-SHA" in upper and "GCM" not in upper and "CHACHA" not in upper:
+            return True
+    # 不安全算法
+    weak_algos = ["RC4", "DES-", "SEED", "IDEA", "MD5"]
+    return any(a in upper for a in weak_algos)
 
 
 def _get_key_exchange_method(cipher_suite):
@@ -501,8 +616,9 @@ def _get_key_exchange_method(cipher_suite):
         return "ECDHE"
     elif "DHE" in cipher_upper or "EDH" in cipher_upper:
         return "DHE"
-    elif "RSA" in cipher_upper and "E" not in cipher_upper:
+    elif "RSA" in cipher_upper:
         return "RSA"
     elif "PSK" in cipher_upper:
         return "PSK"
-    return "Unknown"
+    else:
+        return "RSA"
