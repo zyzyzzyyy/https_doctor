@@ -1,0 +1,4 @@
+wxPython
+cryptography
+pyinstaller
+certifi
