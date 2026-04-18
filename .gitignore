@@ -4,3 +4,11 @@ __pycache__/
 build/
 dist/
 *.spec.orig
+dist/
+HTTPSDoctor.exe
+
+# temp files
+rebuild.bat
+test_pqc.py
+https_doctor.spec
+main.spec
