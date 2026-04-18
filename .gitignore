@@ -5,7 +5,7 @@ build/
 dist/
 *.spec.orig
 dist/
-HTTPSDoctor.exe
+HTTPS_Doctoer.exe
 
 # temp files
 rebuild.bat

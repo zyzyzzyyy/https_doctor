@@ -4,7 +4,7 @@
 
 ## 下载
 
-前往 [Releases](https://github.com/zyzyzzyyy/https_doctor/releases) 下载最新版本 `HTTPSDoctor.exe`，直接运行即可。
+前往 [Releases](https://github.com/zyzyzzyyy/https_doctor/releases) 下载最新版本 `HTTPS_Doctoer.exe`，直接运行即可。
 
 ## 功能特性
 
@@ -29,7 +29,7 @@
 
 ### 运行程序
 
-1. 下载 `HTTPSDoctor.exe`
+1. 下载 `HTTPS_Doctoer.exe`
 2. 双击运行
 3. 在输入框中输入 URL（支持多个，换行分隔）
 4. 点击"开始检测"
@@ -49,7 +49,7 @@ pip install pyinstaller
 pyinstaller HTTPSDoctor.spec --clean
 ```
 
-生成的 exe 文件位于 `dist/HTTPSDoctor.exe`。
+生成的 exe 文件位于 `dist/HTTPS_Doctoer.exe`。
 
 ## 项目结构
 
