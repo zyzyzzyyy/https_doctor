@@ -1,4 +1,120 @@
 """
+CSV 报告生成器 - HTTPS 证书检测工具
+根据证书检测结果生成 CSV 文件。
+"""
+
+import csv
+from typing import List, Dict, Any
+
+
+def generate_csv_report(results: List[Dict[str, Any]], output_path: str) -> None:
+    """
+    根据证书检测结果生成 CSV 报告。
+
+    参数:
+        results: cert_checker 返回的结果字典列表
+        output_path: 保存 CSV 文件的路径
+    """
+    headers = [
+        "URL",
+        "状态",
+        "过期时间",
+        "剩余天数",
+        "证书链完整",
+        "证书链",
+        "TLS版本",
+        "加密套件",
+        "密钥交换",
+        "弱加密",
+        "域名匹配",
+        "证书CN",
+        "证书SAN",
+        "吊销状态",
+        "吊销详情",
+        "错误信息"
+    ]
+
+    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+
+        for result in results:
+            row = _build_row(result)
+            writer.writerow(row)
+
+
+def _build_row(result: Dict[str, Any]) -> List[str]:
+    """将单个检测结果转换为 CSV 行"""
+    status_map = {"valid": "有效", "warning": "警告", "error": "错误"}
+
+    url = result.get("url", "")
+    status = status_map.get(result.get("status", ""), result.get("status", ""))
+
+    expiry = result.get("expiry", {})
+    expire_date = expiry.get("expire_date", "") if expiry else ""
+    days_left = str(expiry.get("days_left", "")) if expiry else ""
+
+    cert_chain_complete = "是" if result.get("cert_chain_complete", False) else "否"
+
+    cert_chain = result.get("cert_chain", [])
+    cert_chain_str = "; ".join([
+        f"{c.get('type', '')}:{c.get('name', '')}" for c in cert_chain
+    ]) if cert_chain else ""
+
+    tls = result.get("tls", {})
+    tls_version = tls.get("version", "") if tls else ""
+    cipher_suite = tls.get("cipher_suite", "") if tls else ""
+    key_exchange = tls.get("key_exchange", "") if tls else ""
+    cipher_weak = "是" if (tls.get("cipher_weak", False) if tls else False) else "否"
+
+    domain_match = result.get("domain_match", {})
+    match = "是" if (domain_match.get("match", False) if domain_match else False) else "否"
+    cert_cn = domain_match.get("cert_cn", "") if domain_match else ""
+    cert_san = "; ".join(domain_match.get("cert_san", [])) if domain_match else ""
+
+    revocation = result.get("revocation", {})
+    revocation_status_raw = revocation.get("status", "") if revocation else ""
+
+    # 判断状态描述
+    if revocation_status_raw == "ok":
+        revocation_status = "正常"
+        revocation_detail = ""
+    elif revocation_status_raw == "revoked":
+        revocation_status = "已吊销"
+        revocation_detail = revocation.get("crl_response", revocation.get("ocsp_response", ""))
+    elif revocation_status_raw == "error":
+        revocation_status = "查询失败"
+        revocation_detail = revocation.get("ocsp_response", "")
+    elif revocation_status_raw == "unknown":
+        revocation_status = "未知"
+        revocation_detail = revocation.get("ocsp_response", revocation.get("crl_response", ""))
+    else:
+        revocation_status = revocation_status_raw
+        revocation_detail = revocation.get("ocsp_response", "")
+
+    error_message = result.get("error_message", "")
+
+    return [
+        url,
+        status,
+        expire_date,
+        days_left,
+        cert_chain_complete,
+        cert_chain_str,
+        tls_version,
+        cipher_suite,
+        key_exchange,
+        cipher_weak,
+        match,
+        cert_cn,
+        cert_san,
+        revocation_status,
+        revocation_detail,
+        error_message
+    ]
+
+
+"""
 HTML 报告生成器 - HTTPS 证书检测工具
 根据证书检测结果生成 HTML 报告。
 """

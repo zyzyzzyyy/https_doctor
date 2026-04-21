@@ -174,8 +174,24 @@ def check_certificate(url: str) -> dict:
                     result["status"] = "error"
                     result["error_message"] = f"域名不匹配: cert={cn}, 访问={host}"
 
-                # 通过 OCSP 检查证书吊销状态
+                # 检查证书吊销状态（优先 OCSP，失败则尝试 CRL）
                 revocation_result = _check_ocsp(cert, host, port)
+
+                # 如果 OCSP 因网络问题失败，尝试 CRL 作为备用
+                if revocation_result["status"] == "error" and "查询失败" in revocation_result.get("ocsp_response", ""):
+                    crl_result = _check_crl(cert, host)
+                    if crl_result["status"] != "unknown":
+                        revocation_result = {
+                            "status": crl_result["status"],
+                            "ocsp_response": revocation_result["ocsp_response"],
+                            "crl_response": crl_result.get("crl_response", "")
+                        }
+                    else:
+                        revocation_result = {
+                            "status": "unknown",
+                            "ocsp_response": revocation_result["ocsp_response"] + "；CRL 也无法查询"
+                        }
+
                 result["revocation"] = revocation_result
 
                 if revocation_result["status"] == "revoked":
@@ -441,6 +457,95 @@ def _check_ocsp(cert, host, port):
         return {"status": "error", "ocsp_response": "OCSP 查询超时"}
     except Exception as e:
         return {"status": "error", "ocsp_response": f"OCSP 查询失败: {str(e)}"}
+
+
+def _check_crl(cert, host):
+    """
+    通过 CRL（证书吊销列表）检查证书是否被吊销。
+    CRL 通常托管在境内 CDN 上，在中国网络环境下更可靠。
+    """
+    try:
+        # 从证书的 CRL 分发点扩展获取 CRL 地址
+        crl_dp = None
+        try:
+            crl_ext = cert.extensions.get_extension_for_class(x509.CRLDistributionPoints)
+            if crl_ext.value:
+                for dp in crl_ext.value:
+                    if dp.full_name:
+                        crl_dp = dp.full_name[0].value
+                        break
+        except x509.ExtensionNotFound:
+            return {"status": "unknown", "crl_response": "未找到 CRL 分发点"}
+        except Exception:
+            pass
+
+        if not crl_dp:
+            return {"status": "unknown", "crl_response": "未找到 CRL 分发点"}
+
+        # 下载 CRL 文件
+        parsed = urlparse(crl_dp)
+        crl_host = parsed.netloc or parsed.path.split("/")[0]
+        crl_path = "/" + "/".join(parsed.path.split("/")[1:]) if parsed.path and "/" in parsed.path else "/"
+
+        # 解析端口
+        if ":" in crl_host:
+            crl_host, crl_port_str = crl_host.split(":")
+            crl_port = int(crl_port_str)
+        else:
+            crl_port = 443 if parsed.scheme == "https" else 80
+
+        # 尝试 HTTPS 和 HTTP
+        response = b""
+        schemes = ["https", "http"] if parsed.scheme == "http" else ["https"]
+
+        for scheme in schemes:
+            if response:
+                break
+            try:
+                with socket.create_connection((crl_host, crl_port), timeout=5) as sock:
+                    if scheme == "https":
+                        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                        context.check_hostname = False
+                        context.verify_mode = ssl.CERT_NONE
+                        with context.wrap_socket(sock) as ssock:
+                            request = f"GET {crl_path} HTTP/1.1\r\nHost: {crl_host}\r\nConnection: close\r\n\r\n"
+                            ssock.sendall(request.encode())
+                            response = _recv_all(ssock)
+                    else:
+                        request = f"GET {crl_path} HTTP/1.1\r\nHost: {crl_host}\r\nConnection: close\r\n\r\n"
+                        sock.sendall(request.encode())
+                        response = _recv_all(sock)
+            except Exception:
+                continue
+
+        if not response:
+            return {"status": "unknown", "crl_response": "无法下载 CRL"}
+
+        # 跳过 HTTP header
+        header_end = response.find(b"\r\n\r\n")
+        body = response[header_end + 4:] if header_end >= 0 else response
+
+        # 尝试解析 CRL
+        try:
+            crl = x509.load_der_x509_crl(body, default_backend())
+
+            # 检查证书是否在 CRL 中
+            try:
+                revoked_cert = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
+                if revoked_cert:
+                    revocation_date = revoked_cert.revocation_date.strftime("%Y-%m-%d")
+                    return {"status": "revoked", "crl_response": f"证书已被吊销 (撤销日期: {revocation_date})"}
+            except AttributeError:
+                pass
+
+            # 证书不在 CRL 中
+            return {"status": "ok", "crl_response": "证书未被吊销 (CRL检查)"}
+
+        except Exception:
+            return {"status": "unknown", "crl_response": "无法解析 CRL 格式"}
+
+    except Exception as e:
+        return {"status": "unknown", "crl_response": f"CRL 检查失败: {str(e)}"}
 
 
 def _get_issuer_from_aia(cert, host):

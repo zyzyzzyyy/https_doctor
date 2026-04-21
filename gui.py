@@ -32,7 +32,9 @@ class MainFrame(wx.Frame):
         menubar = wx.MenuBar()
 
         file_menu = wx.Menu()
-        export_item = file_menu.Append(wx.ID_SAVE, "导出HTML报告\tCtrl+S", "导出检测结果为HTML报告")
+        export_html_item = file_menu.Append(wx.ID_SAVE, "导出HTML报告\tCtrl+S", "导出检测结果为HTML报告")
+        export_csv_item = file_menu.Append(wx.ID_ANY, "导出CSV文件\tCtrl+Shift+S", "导出检测结果为CSV文件")
+        file_menu.AppendSeparator()
         exit_item = file_menu.Append(wx.ID_EXIT, "退出\tCtrl+Q", "退出程序")
         menubar.Append(file_menu, "文件")
 
@@ -43,7 +45,8 @@ class MainFrame(wx.Frame):
         self.SetMenuBar(menubar)
 
         # 绑定菜单事件
-        self.Bind(wx.EVT_MENU, self._on_export, export_item)
+        self.Bind(wx.EVT_MENU, self._on_export_html, export_html_item)
+        self.Bind(wx.EVT_MENU, self._on_export_csv, export_csv_item)
         self.Bind(wx.EVT_MENU, self._on_exit, exit_item)
         self.Bind(wx.EVT_MENU, self._on_about, about_item)
 
@@ -66,16 +69,16 @@ class MainFrame(wx.Frame):
         self.start_btn = wx.Button(btn_panel, label="开始检测")
         self.stop_btn = wx.Button(btn_panel, label="停止")
         self.stop_btn.Enable(False)
-        self.status_label = wx.StaticText(btn_panel, label="状态: 就绪")
-        self.separator = wx.StaticLine(btn_panel, style=wx.LI_VERTICAL)
-        self.progress_label = wx.StaticText(btn_panel, label="0/0")
+        # 右侧容器用于放置进度标签
+        right_panel = wx.Panel(btn_panel)
+        right_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.progress_label = wx.StaticText(right_panel, label="")
+        right_sizer.Add(self.progress_label, flag=wx.ALIGN_CENTER_VERTICAL)
+        right_panel.SetSizer(right_sizer)
+        # 布局：按钮 + 弹性空间 + 右侧进度
         btn_sizer.Add(self.start_btn, flag=wx.RIGHT, border=10)
         btn_sizer.Add(self.stop_btn, flag=wx.RIGHT, border=20)
-        btn_sizer.Add(self.status_label, flag=wx.RIGHT, border=5)
-        btn_sizer.Add(self.separator, flag=wx.RIGHT | wx.EXPAND, border=10)
-        self.progress_label.Wrap(60)
-        btn_sizer.Add(self.progress_label, flag=wx.RIGHT, border=10)
-        btn_sizer.AddStretchSpacer()
+        btn_sizer.Add(right_panel, proportion=1, flag=wx.EXPAND)
         btn_panel.SetSizer(btn_sizer)
 
         self.Bind(wx.EVT_BUTTON, self._on_start_check, self.start_btn)
@@ -139,11 +142,15 @@ class MainFrame(wx.Frame):
         # 导出按钮面板
         self.export_btn_panel = wx.Panel(self)
         export_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.export_btn = wx.Button(self.export_btn_panel, label="导出 HTML 报告")
-        self.export_btn.Enable(False)
-        export_btn_sizer.Add(self.export_btn)
+        self.export_html_btn = wx.Button(self.export_btn_panel, label="导出 HTML 报告")
+        self.export_csv_btn = wx.Button(self.export_btn_panel, label="导出 CSV 文件")
+        self.export_html_btn.Enable(False)
+        self.export_csv_btn.Enable(False)
+        export_btn_sizer.Add(self.export_html_btn, flag=wx.RIGHT, border=10)
+        export_btn_sizer.Add(self.export_csv_btn)
         self.export_btn_panel.SetSizer(export_btn_sizer)
-        self.Bind(wx.EVT_BUTTON, self._on_export, self.export_btn)
+        self.Bind(wx.EVT_BUTTON, self._on_export_html, self.export_html_btn)
+        self.Bind(wx.EVT_BUTTON, self._on_export_csv, self.export_csv_btn)
 
         # 状态栏
         self.statusbar = self.CreateStatusBar()
@@ -180,8 +187,8 @@ class MainFrame(wx.Frame):
         self.is_checking = False
         self._update_ui_state(False)
 
-    def _on_export(self, event):
-        """处理导出按钮点击"""
+    def _on_export_html(self, event):
+        """处理导出 HTML 报告按钮点击"""
         if not self.results:
             wx.MessageBox("没有检测结果可导出", "提示", wx.OK | wx.ICON_WARNING)
             return
@@ -201,6 +208,32 @@ class MainFrame(wx.Frame):
             try:
                 report_generator.generate_html_report(self.results, path)
                 wx.MessageBox(f"报告已导出至: {path}", "成功", wx.OK | wx.ICON_INFORMATION)
+            except Exception as e:
+                wx.MessageBox(f"导出失败: {str(e)}", "错误", wx.OK | wx.ICON_ERROR)
+
+        dlg.Destroy()
+
+    def _on_export_csv(self, event):
+        """处理导出 CSV 文件按钮点击"""
+        if not self.results:
+            wx.MessageBox("没有检测结果可导出", "提示", wx.OK | wx.ICON_WARNING)
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"https_cert_report_{timestamp}.csv"
+
+        dlg = wx.FileDialog(
+            self,
+            wildcard="CSV files (*.csv)|*.csv",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+            defaultFile=default_filename
+        )
+
+        if dlg.ShowModal() == wx.ID_OK:
+            path = dlg.GetPath()
+            try:
+                report_generator.generate_csv_report(self.results, path)
+                wx.MessageBox(f"CSV 文件已导出至: {path}", "成功", wx.OK | wx.ICON_INFORMATION)
             except Exception as e:
                 wx.MessageBox(f"导出失败: {str(e)}", "错误", wx.OK | wx.ICON_ERROR)
 
@@ -250,7 +283,7 @@ class MainFrame(wx.Frame):
         self._clear_results()
         self._clear_detail_panel()
         self._update_ui_state(True)
-        self._update_progress(0, len(urls))
+        self._update_progress(0, len(urls), "")
 
         thread = threading.Thread(target=self._check_worker, args=(urls,))
         thread.daemon = True
@@ -264,7 +297,8 @@ class MainFrame(wx.Frame):
             if not self.is_checking:
                 break
 
-            wx.CallAfter(self._update_status, f"检测中... {url}")
+            wx.CallAfter(self._update_status, f"检测中: {url}")
+            wx.CallAfter(self._update_progress, i + 1, total, url)
 
             try:
                 result = cert_checker.check_certificate(url)
@@ -283,7 +317,6 @@ class MainFrame(wx.Frame):
 
             self.results.append(result)
             wx.CallAfter(self._add_result_row, result, i)
-            wx.CallAfter(self._update_progress, i + 1, total)
 
         wx.CallAfter(self._on_check_complete)
 
@@ -292,16 +325,24 @@ class MainFrame(wx.Frame):
         self.start_btn.Enable(not checking)
         self.stop_btn.Enable(checking)
         self.url_text.Enable(not checking)
-        self.export_btn.Enable(not checking and len(self.results) > 0)
+        has_results = len(self.results) > 0
+        self.export_html_btn.Enable(not checking and has_results)
+        self.export_csv_btn.Enable(not checking and has_results)
 
     def _update_status(self, status: str):
         """更新状态栏文本"""
         self.statusbar.SetStatusText(status)
-        self.status_label.SetLabel(f"状态: {status}")
 
-    def _update_progress(self, current: int, total: int):
+    def _update_progress(self, current: int, total: int, url: str = ""):
         """更新进度标签"""
-        self.progress_label.SetLabel(f"{current}/{total}")
+        if url:
+            # 提取域名显示
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc or url
+            self.progress_label.SetLabel(f"[{current}/{total} {domain}检测中]")
+        else:
+            self.progress_label.SetLabel(f"[{current}/{total}]")
 
     def _clear_results(self):
         """清除所有结果行"""
@@ -452,8 +493,7 @@ class MainFrame(wx.Frame):
         self.is_checking = False
         self._update_ui_state(False)
         self._update_status("检测完成")
-        self.progress_label.SetLabel(f"{len(self.results)}/{len(self.results)}")
-        self.export_btn.Enable(len(self.results) > 0)
+        self.progress_label.SetLabel(f"[{len(self.results)}/{len(self.results)}]")
 
 
 class App(wx.App):
