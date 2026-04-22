@@ -1,12 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('seguiemj.ttf', '.')],
-    hiddenimports=[],
+    datas=[],
+    hiddenimports=['PySide6'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -15,7 +16,6 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
-
 exe = EXE(
     pyz,
     a.scripts,
