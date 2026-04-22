@@ -7,6 +7,7 @@ import wx
 import wx.grid
 import wx.lib.agw.flatnotebook as flatnotebook
 import threading
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -42,6 +43,25 @@ class Colors:
 
     # 按钮禁用色
     BTN_DISABLED = wx.Colour(180, 180, 180)   # 灰色
+
+
+def _create_emoji_font(point_size: int = 10) -> wx.Font:
+    """创建emoji专用字体（使用Segoe UI Emoji）"""
+    try:
+        # PyInstaller打包后，资源文件在 sys._MEIPASS 目录
+        import sys
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(__file__)
+        font_path = os.path.join(base_path, "seguiemj.ttf")
+        if os.path.exists(font_path):
+            wx.Font.AddPrivateFont(font_path)
+            return wx.Font(point_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
+                          wx.FONTWEIGHT_NORMAL, face="Segoe UI Emoji")
+    except Exception:
+        pass
+    return wx.Font(point_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
 
 
 class MainFrame(wx.Frame):
@@ -89,7 +109,7 @@ class MainFrame(wx.Frame):
         self.header_panel = wx.Panel(self)
         header_sizer = wx.BoxSizer(wx.HORIZONTAL)
         title_font = wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        self.title_label = wx.StaticText(self.header_panel, label="🔒 HTTPS 证书检测")
+        self.title_label = wx.StaticText(self.header_panel, label="HTTPS 证书检测")
         self.title_label.SetFont(title_font)
         self.title_label.SetForegroundColour(Colors.TEXT_LIGHT)
         header_sizer.Add(self.title_label, flag=wx.ALIGN_CENTER_VERTICAL | wx.ALL, border=15)
@@ -102,7 +122,7 @@ class MainFrame(wx.Frame):
 
         # 区域标题
         section_font = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        input_label = wx.StaticText(self.input_panel, label="📝 输入待检测的 URL（每行一个）")
+        input_label = wx.StaticText(self.input_panel, label="输入待检测的 URL（每行一个）")
         input_label.SetFont(section_font)
         input_label.SetForegroundColour(Colors.TEXT_PRIMARY)
 
@@ -122,7 +142,7 @@ class MainFrame(wx.Frame):
         self.btn_panel = wx.Panel(self)
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.toggle_btn = wx.Button(self.btn_panel, label="▶️ 开始检测", size=(120, -1))
+        self.toggle_btn = wx.Button(self.btn_panel, label="开始检测", size=(120, -1))
         self._is_checking = False
 
         # 进度标签
@@ -143,7 +163,7 @@ class MainFrame(wx.Frame):
         self.results_panel = wx.Panel(self)
         results_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        results_label = wx.StaticText(self.results_panel, label="📊 检测结果")
+        results_label = wx.StaticText(self.results_panel, label="检测结果")
         results_label.SetFont(section_font)
         results_label.SetForegroundColour(Colors.TEXT_PRIMARY)
 
@@ -165,6 +185,9 @@ class MainFrame(wx.Frame):
         self.results_grid.SetLabelTextColour(Colors.TEXT_PRIMARY)
         self.results_grid.SetGridLineColour(Colors.PRIMARY_LIGHT)
 
+        # 创建emoji字体供状态列使用
+        self.emoji_font = _create_emoji_font(10)
+
         self.results_grid.Bind(wx.grid.EVT_GRID_SELECT_CELL, self._on_grid_select)
 
         results_sizer.Add(results_label, flag=wx.BOTTOM, border=8)
@@ -176,7 +199,7 @@ class MainFrame(wx.Frame):
         self.detail_panel = wx.Panel(self)
         detail_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        detail_label = wx.StaticText(self.detail_panel, label="📋 详情信息")
+        detail_label = wx.StaticText(self.detail_panel, label="详情信息")
         detail_label.SetFont(section_font)
         detail_label.SetForegroundColour(Colors.TEXT_PRIMARY)
 
@@ -192,7 +215,7 @@ class MainFrame(wx.Frame):
         self.cert_chain_page = wx.Panel(self.notebook)
         self.cert_chain_sizer = wx.BoxSizer(wx.VERTICAL)
         self.cert_chain_text = wx.StaticText(self.cert_chain_page, label="")
-        cert_font = wx.Font(9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        cert_font = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
         self.cert_chain_text.SetFont(cert_font)
         self.cert_chain_sizer.Add(self.cert_chain_text, flag=wx.EXPAND | wx.ALL, border=10)
         self.cert_chain_page.SetSizer(self.cert_chain_sizer)
@@ -426,10 +449,10 @@ class MainFrame(wx.Frame):
         """根据检测状态更新 UI"""
         self._is_checking = checking
         if checking:
-            self.toggle_btn.SetLabel("⏹️ 停止")
+            self.toggle_btn.SetLabel("停止")
             self.toggle_btn.SetBackgroundColour(Colors.STATUS_ERROR)
         else:
-            self.toggle_btn.SetLabel("▶️ 开始检测")
+            self.toggle_btn.SetLabel("开始检测")
             self.toggle_btn.SetBackgroundColour(Colors.PRIMARY)
         self.url_text.Enable(not checking)
         has_results = len(self.results) > 0
@@ -500,6 +523,7 @@ class MainFrame(wx.Frame):
         # 设置状态单元格颜色
         attr = wx.grid.GridCellAttr()
         attr.SetBackgroundColour(status_bg_colors.get(status, Colors.BG_PANEL))
+        attr.SetFont(self.emoji_font)
         self.results_grid.SetRowAttr(row, attr)
 
         # 设置状态文字颜色

@@ -18,6 +18,7 @@ def generate_csv_report(results: List[Dict[str, Any]], output_path: str) -> None
     headers = [
         "URL",
         "状态",
+        "异常原因",
         "过期时间",
         "剩余天数",
         "证书链完整",
@@ -50,6 +51,10 @@ def _build_row(result: Dict[str, Any]) -> List[str]:
     url = result.get("url", "")
     status = status_map.get(result.get("status", ""), result.get("status", ""))
 
+    # 异常原因
+    issues = result.get("issues", [])
+    issues_str = "；".join(issues) if issues else "无异常"
+
     expiry = result.get("expiry", {})
     expire_date = expiry.get("expire_date", "") if expiry else ""
     days_left = str(expiry.get("days_left", "")) if expiry else ""
@@ -70,7 +75,7 @@ def _build_row(result: Dict[str, Any]) -> List[str]:
     domain_match = result.get("domain_match", {})
     match = "是" if (domain_match.get("match", False) if domain_match else False) else "否"
     cert_cn = domain_match.get("cert_cn", "") if domain_match else ""
-    cert_san = "; ".join(domain_match.get("cert_san", [])) if domain_match else ""
+    cert_san = "; ".join(str(s) for s in domain_match.get("cert_san", [])) if domain_match else ""
 
     revocation = result.get("revocation", {})
     revocation_status_raw = revocation.get("status", "") if revocation else ""
@@ -97,6 +102,7 @@ def _build_row(result: Dict[str, Any]) -> List[str]:
     return [
         url,
         status,
+        issues_str,
         expire_date,
         days_left,
         cert_chain_complete,
@@ -198,6 +204,7 @@ def _build_html(
                     <tr>
                         <th>状态</th>
                         <th>URL</th>
+                        <th>异常原因</th>
                         <th>过期时间</th>
                         <th>证书链</th>
                         <th>TLS版本</th>
@@ -228,6 +235,7 @@ def _generate_result_rows(results: List[Dict[str, Any]]) -> List[str]:
         expiry_info = r.get("expiry", {})
         cert_chain_complete = r.get("cert_chain_complete", False)
         tls_info = r.get("tls", {})
+        issues = r.get("issues", [])
 
         status_icon = STATUS_ICONS.get(status, STATUS_ICONS["error"])
         status_class = f"status-{status}"
@@ -247,10 +255,14 @@ def _generate_result_rows(results: List[Dict[str, Any]]) -> List[str]:
         # TLS version display
         tls_display = tls_info.get("version", "未知")
 
+        # Issues display
+        issues_display = "；".join(issues) if issues else "无异常"
+
         row = f"""
                     <tr class="{status_class}">
                         <td class="status-cell">{status_icon}</td>
                         <td>{url}</td>
+                        <td>{issues_display}</td>
                         <td>{expiry_display}</td>
                         <td>{chain_display}</td>
                         <td>{tls_display}</td>
@@ -345,7 +357,7 @@ def _generate_domain_detail(r: Dict[str, Any]) -> str:
     san = domain.get("cert_san", [])
 
     match_status = "&#10003; 匹配" if match else "&#10007; 不匹配"
-    san_display = ", ".join(san) if san else "无"
+    san_display = ", ".join(str(s) for s in san) if san else "无"
 
     return f"""
         <div class="detail-section">

@@ -5,6 +5,8 @@ HTTPS 证书检测工具 - 核心检测逻辑（纯函数，无 GUI 依赖）
 import ssl
 import socket
 import datetime
+import re
+import time
 from urllib.parse import urlparse
 import certifi
 from cryptography import x509
@@ -12,6 +14,47 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509 import ocsp
 from cryptography.hazmat.primitives.serialization import pkcs7
+
+
+def _retry_on_failure(max_retries: int = 3, delay: float = 0.5):
+    """连接重试装饰器"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (socket.timeout, socket.gaierror, ConnectionRefusedError, ssl.SSLError, OSError) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+            raise last_exception
+        return wrapper
+    return decorator
+
+
+@_retry_on_failure(max_retries=3, delay=0.5)
+def _ssl_connect_with_retry(context, host, port):
+    """带重试的SSL连接"""
+    sock = socket.create_connection((host, port), timeout=30)
+    try:
+        ssock = context.wrap_socket(sock, server_hostname=host)
+        cert_der = ssock.getpeercert(binary_form=True)
+        if cert_der is None:
+            return None
+        tls_version = ssock.version()
+        cipher_suite = ssock.cipher()
+        return cert_der, tls_version, cipher_suite
+    finally:
+        sock.close()
+
+
+def _is_self_signed(cert) -> bool:
+    """判断是否为自签名证书（签发者与主体相同）"""
+    try:
+        return cert.subject == cert.issuer
+    except Exception:
+        return False
 
 
 def check_certificate(url: str) -> dict:
@@ -50,200 +93,252 @@ def check_certificate(url: str) -> dict:
             "cipher_suite": "",
             "key_exchange": "",
             "cipher_weak": False
-        }
+        },
+        "issues": []  # 异常原因列表
     }
 
     # 解析 URL 获取主机名和端口
     parsed = urlparse(url)
-    host = parsed.hostname
+    host = str(parsed.hostname) if parsed.hostname else ""  # 确保是字符串
     port = parsed.port or 443  # 默认 HTTPS 端口 443
 
     try:
-        # 创建 SSL 上下文，启用主机名检查和证书验证
+        # 创建 SSL 上下文
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = True
-        context.verify_mode = ssl.CERT_REQUIRED
-        context.load_verify_locations(cafile=certifi.where())
+        # IP地址不需要hostname检查，允许获取证书信息（即使域名不匹配或自签名）
+        if _is_ip_address(host):
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE  # IP地址跳过证书验证
+        else:
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_verify_locations(cafile=certifi.where())
 
-        # 连接到服务器并获取证书信息
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
-                # 获取 DER 格式的证书
-                cert_der = ssock.getpeercert(binary_form=True)
-                if cert_der is None:
-                    raise ValueError("未收到证书")
+        # 使用重试机制连接服务器并获取证书信息
+        cert_data = _ssl_connect_with_retry(context, host, port)
+        if cert_data is None:
+            raise ValueError("无法获取证书信息")
 
-                # 获取 TLS 版本和加密套件信息
-                tls_version = ssock.version()
-                cipher_suite = ssock.cipher()
+        cert_der, tls_version, cipher_suite = cert_data
 
-                # 使用 cryptography 库解析证书
-                cert = x509.load_der_x509_certificate(cert_der, default_backend())
+        # 使用 cryptography 库解析证书
+        cert = x509.load_der_x509_certificate(cert_der, default_backend())
 
-                # 从服务器的证书链构建证书链信息
-                cert_chain = []
-                try:
-                    # 首先添加服务器证书
-                    server_name = _get_cert_name(cert)
+        # 从服务器的证书链构建证书链信息
+        cert_chain = []
+        try:
+            # 首先添加服务器证书
+            server_name = _get_cert_name(cert)
+            cert_chain.append({
+                "type": "server",
+                "name": server_name,
+                "status": "ok"
+            })
+
+            # 尝试通过 AIA 获取中间证书
+            issuer_cert = _get_issuer_from_aia(cert, host)
+            if issuer_cert is not None:
+                issuer_type = _get_cert_type(issuer_cert)
+                issuer_name = _get_cert_name(issuer_cert)
+                if issuer_name != server_name:
                     cert_chain.append({
-                        "type": "server",
-                        "name": server_name,
+                        "type": issuer_type,
+                        "name": issuer_name,
                         "status": "ok"
                     })
+                # 尝试获取根证书
+                root_issuer = _get_issuer_from_aia(issuer_cert, host)
+                if root_issuer is not None:
+                    root_type = _get_cert_type(root_issuer)
+                    root_name = _get_cert_name(root_issuer)
+                    if root_name != issuer_name and root_name != server_name:
+                        cert_chain.append({
+                            "type": root_type,
+                            "name": root_name,
+                            "status": "ok"
+                        })
+        except (AttributeError, Exception):
+            pass
 
-                    # 尝试通过 AIA 获取中间证书
-                    issuer_cert = _get_issuer_from_aia(cert, host)
-                    if issuer_cert is not None:
-                        issuer_type = _get_cert_type(issuer_cert)
-                        issuer_name = _get_cert_name(issuer_cert)
-                        if issuer_name != server_name:
-                            cert_chain.append({
-                                "type": issuer_type,
-                                "name": issuer_name,
-                                "status": "ok"
-                            })
-                        # 尝试获取根证书
-                        root_issuer = _get_issuer_from_aia(issuer_cert, host)
-                        if root_issuer is not None:
-                            root_type = _get_cert_type(root_issuer)
-                            root_name = _get_cert_name(root_issuer)
-                            if root_name != issuer_name and root_name != server_name:
-                                cert_chain.append({
-                                    "type": root_type,
-                                    "name": root_name,
-                                    "status": "ok"
-                                })
-                except (AttributeError, Exception):
-                    pass
+        # 确保至少包含服务器证书
+        if not cert_chain:
+            cert_chain.append({
+                "type": "server",
+                "name": _get_cert_name(cert),
+                "status": "ok"
+            })
 
-                # 确保至少包含服务器证书
-                if not cert_chain:
-                    cert_chain.append({
-                        "type": "server",
-                        "name": _get_cert_name(cert),
-                        "status": "ok"
-                    })
+        # 检查证书链完整性
+        # 完整链应包含服务器证书以及根 CA 或中间 CA
+        has_root = any(c["type"] == "root" for c in cert_chain)
+        has_intermediate = any(c["type"] == "intermediate" for c in cert_chain)
+        has_server = any(c["type"] == "server" for c in cert_chain)
 
-                # 检查证书链完整性
-                # 完整链应包含服务器证书以及根 CA 或中间 CA
-                has_root = any(c["type"] == "root" for c in cert_chain)
-                has_intermediate = any(c["type"] == "intermediate" for c in cert_chain)
-                has_server = any(c["type"] == "server" for c in cert_chain)
+        result["cert_chain"] = cert_chain
+        # 完整链应包含服务器证书 + 根CA或中间CA
+        result["cert_chain_complete"] = (has_root or has_intermediate) and has_server
 
-                result["cert_chain"] = cert_chain
-                # 自签名证书没有中间证书
-                if has_root:
-                    result["cert_chain_complete"] = True
-                elif has_intermediate:
-                    result["cert_chain_complete"] = True
-                else:
-                    result["cert_chain_complete"] = has_server
+        # 检查证书过期时间
+        expiry_date = cert.not_valid_after_utc if hasattr(cert, 'not_valid_after_utc') else cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        days_left = (expiry_date - now).days
+        expired = expiry_date < now
 
-                # 检查证书过期时间
-                expiry_date = cert.not_valid_after_utc if hasattr(cert, 'not_valid_after_utc') else cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
-                now = datetime.datetime.now(datetime.timezone.utc)
-                days_left = (expiry_date - now).days
-                expired = expiry_date < now
+        result["expiry"] = {
+            "expired": expired,
+            "days_left": days_left,
+            "expire_date": expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+        }
 
-                result["expiry"] = {
-                    "expired": expired,
-                    "days_left": days_left,
-                    "expire_date": expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+        # 根据过期时间添加到异常列表
+        if expired:
+            result["issues"].append("证书已过期")
+        elif days_left is not None and days_left <= 20:
+            result["issues"].append(f"证书即将在{days_left}天内到期")
+
+        # 检查域名匹配
+        cn = _get_cn(cert)
+        san_list = _get_san(cert)
+        match = _verify_domain_match(host, cn, san_list)
+
+        result["domain_match"] = {
+            "match": match,
+            "cert_cn": cn,
+            "cert_san": san_list
+        }
+
+        # IP地址或域名不匹配时，添加到异常列表
+        if not match:
+            if _is_ip_address(host):
+                result["issues"].append("未使用域名")
+            else:
+                result["issues"].append("证书与域名不匹配")
+
+        # 检查证书吊销状态（优先 OCSP，失败则尝试 CRL）
+        revocation_result = _check_ocsp(cert, host, port)
+
+        # 如果 OCSP 因网络问题失败，尝试 CRL 作为备用
+        if revocation_result["status"] == "error" and "查询失败" in revocation_result.get("ocsp_response", ""):
+            crl_result = _check_crl(cert, host)
+            if crl_result["status"] != "unknown":
+                revocation_result = {
+                    "status": crl_result["status"],
+                    "ocsp_response": revocation_result["ocsp_response"],
+                    "crl_response": crl_result.get("crl_response", "")
+                }
+            else:
+                revocation_result = {
+                    "status": "unknown",
+                    "ocsp_response": revocation_result["ocsp_response"] + "；CRL 也无法查询"
                 }
 
-                # 根据过期时间确定状态
-                if expired:
-                    result["status"] = "error"
-                elif days_left is not None and days_left <= 30:
-                    result["status"] = "warning"
-                else:
-                    result["status"] = "valid"
+        result["revocation"] = revocation_result
 
-                # 检查域名匹配
-                cn = _get_cn(cert)
-                san_list = _get_san(cert)
-                match = _verify_domain_match(host, cn, san_list)
+        # 检查证书是否被吊销
+        if revocation_result["status"] == "revoked":
+            result["issues"].append("证书已被吊销")
 
-                result["domain_match"] = {
-                    "match": match,
-                    "cert_cn": cn,
-                    "cert_san": san_list
-                }
+        # 获取 TLS 信息
+        result["tls"] = {
+            "version": tls_version,
+            "cipher_suite": cipher_suite[0] if cipher_suite else "",
+            "key_exchange": _get_key_exchange_method(cipher_suite[0] if cipher_suite else ""),
+            "cipher_weak": _is_weak_cipher(cipher_suite[0] if cipher_suite else "")
+        }
 
-                if not match:
-                    result["status"] = "error"
-                    result["error_message"] = f"域名不匹配: cert={cn}, 访问={host}"
+        # 收集所有异常（暂存）
+        all_issues = []
 
-                # 检查证书吊销状态（优先 OCSP，失败则尝试 CRL）
-                revocation_result = _check_ocsp(cert, host, port)
+        # 检查证书已过期
+        if expired:
+            all_issues.append(("证书已过期", "error"))
 
-                # 如果 OCSP 因网络问题失败，尝试 CRL 作为备用
-                if revocation_result["status"] == "error" and "查询失败" in revocation_result.get("ocsp_response", ""):
-                    crl_result = _check_crl(cert, host)
-                    if crl_result["status"] != "unknown":
-                        revocation_result = {
-                            "status": crl_result["status"],
-                            "ocsp_response": revocation_result["ocsp_response"],
-                            "crl_response": crl_result.get("crl_response", "")
-                        }
-                    else:
-                        revocation_result = {
-                            "status": "unknown",
-                            "ocsp_response": revocation_result["ocsp_response"] + "；CRL 也无法查询"
-                        }
+        # 检查证书即将过期
+        if days_left is not None and days_left <= 20 and not expired:
+            all_issues.append((f"证书即将在{days_left}天内到期", "warning"))
 
-                result["revocation"] = revocation_result
+        # 检查证书被吊销
+        if revocation_result["status"] == "revoked":
+            all_issues.append(("证书已被吊销", "error"))
 
-                if revocation_result["status"] == "revoked":
-                    result["status"] = "error"
-                    result["error_message"] = "证书已被吊销"
+        # 检查未使用域名（IP访问）
+        if _is_ip_address(host):
+            all_issues.append(("未使用域名", "error"))
 
-                # 获取 TLS 信息
-                result["tls"] = {
-                    "version": tls_version,
-                    "cipher_suite": cipher_suite[0] if cipher_suite else "",
-                    "key_exchange": _get_key_exchange_method(cipher_suite[0] if cipher_suite else ""),
-                    "cipher_weak": _is_weak_cipher(cipher_suite[0] if cipher_suite else "")
-                }
+        # 检查自签名证书
+        if _is_self_signed(cert):
+            all_issues.append(("证书为自签名", "error"))
 
-                # 弱加密套件也标记为警告
-                if result["tls"]["cipher_weak"]:
-                    result["status"] = "warning"
-                    if not result["error_message"]:
-                        result["error_message"] = "使用了不安全的加密套件"
+        # 检查域名不匹配（仅非IP访问时）
+        if not match and not _is_ip_address(host):
+            all_issues.append(("证书与域名不匹配", "error"))
 
-                # 检查 TLS 版本，过旧版本标记为警告
-                if tls_version in ("TLSv1", "TLSv1.1"):
-                    result["status"] = "warning"
-                    if not result["error_message"]:
-                        result["error_message"] = f"TLS {tls_version.replace('TLSv', '1.')} 已弃用"
+        # 检查弱密码套件
+        if result["tls"]["cipher_weak"]:
+            all_issues.append(("使用了弱密码套件", "warning"))
+
+        # 检查TLS版本过低
+        if tls_version in ("TLSv1", "TLSv1.1"):
+            all_issues.append(("TLS版本过低", "warning"))
+
+        # 检查证书链不完整
+        if not result["cert_chain_complete"]:
+            all_issues.append(("证书链不完整", "warning"))
+
+        # 一票否决：根据优先级确定最终状态
+        # 优先级: URL无法访问 > 检测失败 > 证书已过期 > 证书已被吊销 > 未使用域名 > 自签名证书 > 其他
+        critical_errors = {
+            "证书已过期", "证书已被吊销", "未使用域名", "证书为自签名", "证书与域名不匹配"
+        }
+
+        final_issues = []
+        final_status = "valid"
+
+        # 检查是否有critical error
+        for issue_text, issue_type in all_issues:
+            if issue_text in critical_errors:
+                final_issues = [issue_text]
+                final_status = "error"
+                break
+
+        # 如果没有critical error，显示所有其他问题
+        if not final_issues:
+            for issue_text, issue_type in all_issues:
+                final_issues.append(issue_text)
+                if issue_type == "error":
+                    final_status = "error"
+                elif issue_type == "warning" and final_status == "valid":
+                    final_status = "warning"
+
+        result["issues"] = final_issues
+        result["status"] = final_status
 
     except socket.gaierror as e:
-        result["error_message"] = f"连接失败: 无法解析域名"
+        result["issues"].append("URL无法访问")
         result["status"] = "error"
         result["cert_chain"] = []
         result["cert_chain_complete"] = False
         result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
         result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except socket.timeout:
-        result["error_message"] = f"连接失败: 连接超时"
+        result["issues"].append("URL无法访问")
         result["status"] = "error"
         result["cert_chain"] = []
         result["cert_chain_complete"] = False
         result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
         result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except ConnectionRefusedError:
-        result["error_message"] = f"连接失败: 连接被拒绝"
+        result["issues"].append("URL无法访问")
         result["status"] = "error"
         result["cert_chain"] = []
         result["cert_chain_complete"] = False
         result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
         result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except ssl.SSLCertVerificationError as e:
-        result["error_message"] = f"证书验证失败: {str(e)}"
+        result["issues"].append("证书验证失败")
         result["status"] = "error"
     except Exception as e:
-        result["error_message"] = f"检测失败: {str(e)}"
+        result["issues"].append("检测失败")
         result["status"] = "error"
         result["cert_chain"] = []
         result["cert_chain_complete"] = False
@@ -337,7 +432,12 @@ def _verify_domain_match(host, cn, san_list):
     支持:
     - 直接匹配
     - 通配符匹配（如 *.example.com 匹配 sub.example.com）
+    - IP地址匹配
     """
+    # 转换为字符串进行比较
+    host = str(host) if host else ""
+    cn = str(cn) if cn else ""
+
     # 直接匹配
     if cn == host:
         return True
@@ -350,6 +450,7 @@ def _verify_domain_match(host, cn, san_list):
 
     # SAN 匹配
     for san in san_list:
+        san = str(san) if san else ""
         if san == host:
             return True
         if san.startswith("*."):
@@ -357,6 +458,18 @@ def _verify_domain_match(host, cn, san_list):
             if host.endswith(base_domain) and host != base_domain:
                 return True
 
+    return False
+
+
+def _is_ip_address(host: str) -> bool:
+    """判断是否为IP地址"""
+    # IPv4地址
+    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    if re.match(ipv4_pattern, host):
+        return True
+    # IPv6地址（简化判断）
+    if ':' in host:
+        return True
     return False
 
 

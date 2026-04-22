@@ -131,10 +131,15 @@ QTextEdit {{
     padding: 12px;
     font-size: 13px;
     color: {Colors.TEXT_PRIMARY};
+    selection-background-color: #B3D4FC;
 }}
 
 QTextEdit:focus {{
     border-color: {Colors.PRIMARY};
+}}
+
+QTextEdit QScrollBar {{
+    background-color: transparent;
 }}
 
 /* 表格样式 */
@@ -151,6 +156,7 @@ QTableWidget {{
 QTableWidget::item {{
     padding: 8px;
     border: none;
+    wrap-mode: anywhere;
 }}
 
 QTableWidget::item:selected {{
@@ -254,7 +260,8 @@ class MainWindow(QMainWindow):
         self.current_check_thread: Optional[QThread] = None
 
         self.setWindowTitle("HTTPS 证书检测工具")
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(1200, 1200)
+        self.resize(1200, 1200)  # 默认窗口大小
         self._init_ui()
         self._apply_styles()
 
@@ -321,10 +328,20 @@ class MainWindow(QMainWindow):
         label.setStyleSheet("color: #1D1C1C;")
         layout.addWidget(label)
 
+        input_layout = QHBoxLayout()
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(16)
+
         self.url_input = QTextEdit()
-        self.url_input.setPlaceholderText("例如:\nhttps://example.com\nhttps://google.com")
-        self.url_input.setMaximumHeight(100)
-        layout.addWidget(self.url_input)
+        self.url_input.setMinimumHeight(120)
+        input_layout.addWidget(self.url_input, 1)
+
+        hint = QLabel("例如：\nwww.abc.com\nhttps://www.bcd.com")
+        hint.setStyleSheet("color: #888; font-size: 12px; padding: 8px; background: transparent;")
+        hint.setAlignment(Qt.Alignment(Qt.AlignTop | Qt.AlignLeft))
+        input_layout.addWidget(hint)
+
+        layout.addLayout(input_layout)
 
         return frame
 
@@ -360,12 +377,23 @@ class MainWindow(QMainWindow):
         layout.addWidget(label)
 
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(5)
-        self.results_table.setHorizontalHeaderLabels(["状态", "URL", "过期时间", "证书链", "TLS版本"])
+        self.results_table.setColumnCount(7)
+        self.results_table.verticalHeader().setVisible(False)  # 隐藏默认行号列
+        self.results_table.setWordWrap(True)  # 启用自动换行
+        self.results_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)  # 自动调整行高
+        self.results_table.horizontalHeader().setMinimumSectionSize(60)  # 每列最小宽度60px
+        self.results_table.setHorizontalHeaderLabels(["序号", "状态", "URL", "异常原因", "过期时间", "证书链", "TLS版本"])
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.results_table.horizontalHeader().setStretchLastSection(True)
-        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # 设置各列宽度模式
+        self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)  # 序号 - 固定宽度
+        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # 状态 - 自适应
+        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # URL - 自适应
+        self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # 异常原因 - 占剩余宽度
+        self.results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 过期时间 - 自适应
+        self.results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # 证书链 - 自适应
+        self.results_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)  # TLS版本 - 自适应
+        self.results_table.setColumnWidth(0, 40)   # 序号列固定40px
         self.results_table.itemSelectionChanged.connect(self._on_row_selected)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
@@ -500,6 +528,11 @@ class MainWindow(QMainWindow):
 
     def _start_checking(self, urls: List[str]):
         """开始检测"""
+        # 如果有旧的检测线程在运行，先停止它
+        if hasattr(self, 'check_thread') and self.check_thread.is_alive():
+            self.is_checking = False
+            self.check_thread.join(timeout=1)
+
         self.is_checking = True
         self.results = []
         self.selected_index = -1
@@ -581,6 +614,13 @@ class MainWindow(QMainWindow):
         expiry_info = result.get("expiry", {})
         cert_chain_complete = result.get("cert_chain_complete", False)
         tls_info = result.get("tls", {})
+        issues = result.get("issues", [])
+
+        # 序号
+        seq_item = QTableWidgetItem(str(row + 1))
+        seq_item.setForeground(QColor(Colors.TEXT_SECONDARY))
+        seq_item.setTextAlignment(Qt.AlignCenter)
+        self.results_table.setItem(row, 0, seq_item)
 
         # 状态
         status_icon = get_status_icon(status)
@@ -588,12 +628,23 @@ class MainWindow(QMainWindow):
         status_item.setForeground(QColor(get_status_style(status)[1]))
         status_item.setBackground(QColor(get_status_style(status)[0]))
         status_item.setTextAlignment(Qt.AlignCenter)
-        self.results_table.setItem(row, 0, status_item)
+        self.results_table.setItem(row, 1, status_item)
 
-        # URL
+        # URL - 启用自动换行
         url_item = QTableWidgetItem(url)
         url_item.setForeground(QColor(Colors.TEXT_PRIMARY))
-        self.results_table.setItem(row, 1, url_item)
+        url_item.setFont(QFont("", -1, QFont.Normal))
+        self.results_table.setItem(row, 2, url_item)
+
+        # 异常原因 - 启用自动换行
+        if issues:
+            issues_display = "；".join(issues)
+        else:
+            issues_display = "无异常"
+        issues_item = QTableWidgetItem(issues_display)
+        issues_item.setForeground(QColor(Colors.TEXT_PRIMARY))
+        issues_item.setFont(QFont("", -1, QFont.Normal))
+        self.results_table.setItem(row, 3, issues_item)
 
         # 过期时间
         error_message = result.get("error_message", "")
@@ -613,11 +664,17 @@ class MainWindow(QMainWindow):
         expiry_item = QTableWidgetItem(expiry_display)
         expiry_item.setForeground(QColor(Colors.TEXT_PRIMARY))
         expiry_item.setTextAlignment(Qt.AlignCenter)
-        self.results_table.setItem(row, 2, expiry_item)
+        self.results_table.setItem(row, 4, expiry_item)
 
         # 证书链
-        if error_message and "连接" in error_message:
-            chain_display = "访问失败"
+        issues = result.get("issues", [])
+        is_error = result.get("status") == "error" and any(
+            issue in issues for issue in ["URL无法访问", "检测失败"]
+        )
+        if is_error:
+            chain_display = "未知"
+        elif error_message and "连接" in error_message:
+            chain_display = "未知"
         elif cert_chain_complete:
             chain_display = "完整"
         else:
@@ -625,7 +682,7 @@ class MainWindow(QMainWindow):
         chain_item = QTableWidgetItem(chain_display)
         chain_item.setForeground(QColor(Colors.TEXT_PRIMARY))
         chain_item.setTextAlignment(Qt.AlignCenter)
-        self.results_table.setItem(row, 3, chain_item)
+        self.results_table.setItem(row, 5, chain_item)
 
         # TLS 版本
         if error_message and "连接" in error_message:
@@ -635,7 +692,7 @@ class MainWindow(QMainWindow):
         tls_item = QTableWidgetItem(tls_display)
         tls_item.setForeground(QColor(Colors.TEXT_PRIMARY))
         tls_item.setTextAlignment(Qt.AlignCenter)
-        self.results_table.setItem(row, 4, tls_item)
+        self.results_table.setItem(row, 6, tls_item)
 
     def _on_row_selected(self):
         """处理行选择"""
