@@ -262,6 +262,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("HTTPS 证书检测工具")
         self.setMinimumSize(1200, 1200)
         self.resize(1200, 1200)  # 默认窗口大小
+        self._center_on_screen()
         self._init_ui()
         self._apply_styles()
 
@@ -269,6 +270,21 @@ class MainWindow(QMainWindow):
         self.result_ready.connect(self._on_result_ready)
         self.status_update.connect(self._on_status_update)
         self.check_finished.connect(self._on_check_finished)
+
+    def _center_on_screen(self):
+        """将窗口定位到当前屏幕正中央"""
+        from PySide6.QtGui import QScreen, QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            screen_geometry = screen.availableGeometry()
+            window_geometry = self.frameGeometry()
+            # 计算中心位置，确保窗口完全在屏幕内
+            x = screen_geometry.center().x() - window_geometry.width() // 2
+            y = screen_geometry.center().y() - window_geometry.height() // 2
+            # 限制在屏幕范围内
+            x = max(screen_geometry.left(), min(x, screen_geometry.right() - window_geometry.width()))
+            y = max(screen_geometry.top(), min(y, screen_geometry.bottom() - window_geometry.height()))
+            self.move(x, y)
 
     def _init_ui(self):
         """初始化 UI 组件"""
