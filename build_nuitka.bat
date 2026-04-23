@@ -15,8 +15,10 @@ echo y | %PYTHON% -m nuitka ^
     --standalone ^
     --onefile ^
     --windows-console-mode=disable ^
+    --windows-icon-from-ico=icon.ico ^
     --enable-plugin=pyside6 ^
     --follow-imports ^
+    --include-data-file=icon.png=icon.png ^
     --output-filename=HTTPS_Doctor.exe ^
     main.py
 
