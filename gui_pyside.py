@@ -910,6 +910,11 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # 设置 Qt 插件路径（修复 PySide6 打包后找不到平台插件的问题）
+    import PySide6
+    pyside_path = os.path.dirname(PySide6.__file__)
+    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(pyside_path, 'plugins', 'platforms')
+
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

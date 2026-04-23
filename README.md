@@ -61,12 +61,40 @@ python main.py
 
 ### 打包 exe
 
+推荐使用 **Nuitka** 打包（体积更小，约 24MB）：
+
+```bash
+# 安装 Nuitka（推荐）
+pip install nuitka
+
+# 创建虚拟环境（可选但推荐）
+python -m venv venv
+venv\Scripts\pip install pyside6 cryptography certifi nuitka
+
+# 打包（首次会下载 MinGW 编译器）
+venv\Scripts\python -m nuitka --standalone --onefile --windows-console-mode=disable --enable-plugin=pyside6 main.py
+```
+
+或使用打包脚本：
+```bash
+build_nuitka.bat
+```
+
+**备选方案 - PyInstaller**（约 49MB）：
+
 ```bash
 pip install pyinstaller
-pyinstaller HTTPSDoctor_PySide6.spec --clean
+pyinstaller --onefile --windowed --name HTTPS_Doctor main.py
 ```
 
 生成的 exe 文件位于 `dist/HTTPS_Doctor.exe`。
+
+### 打包对比
+
+| 打包工具 | 文件大小 | 说明 |
+|---------|---------|------|
+| **Nuitka** | ~24MB | 编译成机器码，体积小，运行快 |
+| PyInstaller | ~49MB | 打包 Python 字节码，兼容性更好 |
 
 ## 项目结构
 
@@ -75,9 +103,11 @@ https_doctor/
 ├── main.py                # 程序入口
 ├── gui_pyside.py          # PySide6 GUI 主界面
 ├── gui.py                 # wxPython GUI（保留兼容）
-├── cert_checker.py         # 证书检测核心逻辑
-├── report_generator.py     # HTML/CSV 报告生成器
+├── cert_checker.py        # 证书检测核心逻辑
+├── report_generator.py    # HTML/CSV 报告生成器
 ├── requirements.txt       # 依赖列表
+├── build_nuitka.bat      # Nuitka 打包脚本（推荐）
+├── build.bat             # PyInstaller 打包脚本
 └── HTTPSDoctor_PySide6.spec  # PyInstaller 打包配置
 ```
 
