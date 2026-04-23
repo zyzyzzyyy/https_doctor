@@ -263,6 +263,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1200, 1200)
         self.resize(1200, 1200)  # 默认窗口大小
         self._center_on_screen()
+        self._load_icon()
         self._init_ui()
         self._apply_styles()
 
@@ -285,6 +286,20 @@ class MainWindow(QMainWindow):
             x = max(screen_geometry.left(), min(x, screen_geometry.right() - window_geometry.width()))
             y = max(screen_geometry.top(), min(y, screen_geometry.bottom() - window_geometry.height()))
             self.move(x, y)
+
+    def _load_icon(self):
+        """加载窗口图标"""
+        import PySide6
+        import os
+        pyside_path = os.path.dirname(PySide6.__file__)
+        icon_path = os.path.join(pyside_path, '..', '..', 'icon.png')
+        icon_path = os.path.abspath(icon_path)
+        if os.path.exists(icon_path):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(icon_path))
+        elif os.path.exists('icon.png'):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon('icon.png'))
 
     def _init_ui(self):
         """初始化 UI 组件"""
