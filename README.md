@@ -1,7 +1,7 @@
 # HTTPS Doctor
 
 一款轻量级的 HTTPS 证书诊断工具，支持批量检测网站的证书状态、加密套件安全性和证书链完整性。
-![Uploading image.png…]()
+
 
 ## 下载
 
