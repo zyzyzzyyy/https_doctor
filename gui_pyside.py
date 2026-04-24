@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
     QTextEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QTabWidget, QFileDialog, QMessageBox, QHeaderView, QSizePolicy,
     QFrame, QGraphicsDropShadowEffect, QStyledItemDelegate, QStyleOptionButton,
-    QStyle, QAbstractItemView, QListWidget, QListWidgetItem, QStatusBar
+    QStyle, QAbstractItemView, QListWidget, QListWidgetItem, QStatusBar,
+    QButtonGroup
 )
 from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer, QMetaObject
 from PySide6.QtGui import QFont, QColor, QPalette, QPainter, QBrush, QPen, QIcon
@@ -258,6 +259,7 @@ class MainWindow(QMainWindow):
         self.selected_index: int = -1
         self.is_checking: bool = False
         self.current_check_thread: Optional[QThread] = None
+        self._current_filter: str = "all"
 
         self.setWindowTitle("HTTPS 证书检测工具")
         self.setMinimumSize(1200, 1200)
@@ -399,13 +401,62 @@ class MainWindow(QMainWindow):
         frame.setObjectName("panel")
         layout = QVBoxLayout(frame)
 
+        # 标题行：标签 + 筛选按钮
+        title_layout = QHBoxLayout()
+        title_layout.setSpacing(8)
+
         label = QLabel("检测结果")
         label_font = QFont()
         label_font.setPointSize(14)
         label_font.setBold(True)
         label.setFont(label_font)
         label.setStyleSheet("color: #1D1C1C;")
-        layout.addWidget(label)
+        title_layout.addWidget(label)
+        title_layout.addStretch()
+
+        # 筛选按钮组
+        self.filter_group = QButtonGroup()
+        self.filter_group.setExclusive(True)
+
+        filter_buttons = [
+            ("all", "全部", None),
+            ("valid", "有效", Colors.STATUS_VALID),
+            ("warning", "警告", Colors.STATUS_WARNING),
+            ("error", "错误", Colors.STATUS_ERROR),
+        ]
+
+        for btn_id, text, color in filter_buttons:
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(28)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #e0e0e0;
+                    color: #333;
+                    border: none;
+                    border-radius: 14px;
+                    padding: 4px 12px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: #d0d0d0;
+                }}
+                QPushButton:checked {{
+                    background-color: {color or '#666'};
+                    color: white;
+                }}
+            """)
+            self.filter_group.addButton(btn)
+            self.filter_group.setId(btn, {"all": 0, "valid": 1, "warning": 2, "error": 3}[btn_id])
+            title_layout.addWidget(btn)
+
+        # 默认选中"全部"
+        self.filter_group.button(0).setChecked(True)
+        self.filter_group.idClicked.connect(self._on_filter_changed)
+
+        layout.addLayout(title_layout)
+        self._current_filter = "all"
 
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(7)
@@ -632,6 +683,7 @@ class MainWindow(QMainWindow):
         self.is_checking = False
         self._update_ui_state(False)
         self.status_text.setText("完成检测")
+        self._update_filter_counts()
 
     def _add_result_row(self, result: Dict[str, Any], row: int):
         """向表格添加结果行"""
@@ -656,6 +708,7 @@ class MainWindow(QMainWindow):
         # 状态
         status_icon = get_status_icon(status)
         status_item = QTableWidgetItem(status_icon)
+        status_item.setData(Qt.UserRole, status)  # 保存status用于筛选
         status_item.setForeground(QColor(get_status_style(status)[1]))
         status_item.setBackground(QColor(get_status_style(status)[0]))
         status_item.setTextAlignment(Qt.AlignCenter)
@@ -732,6 +785,51 @@ class MainWindow(QMainWindow):
             row = selected[0].row()
             self.selected_index = row
             self._update_detail_panel()
+
+    def _on_filter_changed(self, btn_id: int):
+        """筛选按钮切换"""
+        filter_map = {0: "all", 1: "valid", 2: "warning", 3: "error"}
+        self._current_filter = filter_map.get(btn_id, "all")
+        self._apply_filter()
+        self._update_filter_counts()
+
+    def _apply_filter(self):
+        """根据筛选条件显示/隐藏行"""
+        for row in range(self.results_table.rowCount()):
+            if self._current_filter == "all":
+                self.results_table.setRowHidden(row, False)
+            else:
+                item = self.results_table.item(row, 1)  # 状态列
+                if item:
+                    status = item.data(Qt.UserRole) if item.data(Qt.UserRole) else ""
+                    if status != self._current_filter:
+                        self.results_table.setRowHidden(row, True)
+                    else:
+                        self.results_table.setRowHidden(row, False)
+
+    def _update_filter_counts(self):
+        """更新筛选按钮计数"""
+        if not self.results:
+            return
+
+        counts = {"all": len(self.results), "valid": 0, "warning": 0, "error": 0}
+        for r in self.results:
+            status = r.get("status", "error")
+            if status in counts:
+                counts[status] += 1
+
+        # 更新按钮文字
+        buttons = self.filter_group.buttons()
+        for btn in buttons:
+            btn_id = self.filter_group.id(btn)
+            if btn_id == 0:
+                btn.setText(f"全部 ({counts['all']})")
+            elif btn_id == 1:
+                btn.setText(f"✅有效 ({counts['valid']})")
+            elif btn_id == 2:
+                btn.setText(f"⚠️警告 ({counts['warning']})")
+            elif btn_id == 3:
+                btn.setText(f"❌错误 ({counts['error']})")
 
     def _clear_results(self):
         """清除所有结果"""
