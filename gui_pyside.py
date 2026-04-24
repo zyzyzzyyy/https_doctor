@@ -412,6 +412,7 @@ class MainWindow(QMainWindow):
         label.setFont(label_font)
         label.setStyleSheet("color: #1D1C1C;")
         title_layout.addWidget(label)
+        title_layout.addSpacing(30)  # 标题和按钮间距
         title_layout.addStretch()
 
         # 筛选按钮组
@@ -673,6 +674,12 @@ class MainWindow(QMainWindow):
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
         self._set_row_data(row, result)
+        # 根据当前筛选条件隐藏/显示新行
+        if self._current_filter != "all":
+            status = result.get("status", "error")
+            if status != self._current_filter:
+                self.results_table.setRowHidden(row, True)
+        self._update_filter_counts()  # 实时更新筛选计数
 
     def _on_status_update(self, status: str):
         """线程安全的状态更新"""
