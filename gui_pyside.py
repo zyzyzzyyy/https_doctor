@@ -634,7 +634,7 @@ class MainWindow(QMainWindow):
         """证书检测工作线程"""
         total = len(urls)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=15) as executor:
             future_to_url = {executor.submit(self._check_single_url, url, i): (i, url) for i, url in enumerate(urls)}
 
             for future in as_completed(future_to_url):
