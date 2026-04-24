@@ -335,8 +335,45 @@ def check_certificate(url: str) -> dict:
         result["expiry"] = {"expired": False, "days_left": None, "expire_date": None}
         result["tls"] = {"version": "", "cipher_suite": "", "key_exchange": "", "cipher_weak": False}
     except ssl.SSLCertVerificationError as e:
-        result["issues"].append("证书验证失败")
-        result["status"] = "error"
+        # 证书验证失败时，尝试禁用验证获取证书信息
+        try:
+            ctx_no_verify = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx_no_verify.check_hostname = False
+            ctx_no_verify.verify_mode = ssl.CERT_NONE
+            cert_data = _ssl_connect_with_retry(ctx_no_verify, host, port)
+            if cert_data:
+                cert_der, tls_version, cipher_suite = cert_data
+                cert = x509.load_der_x509_certificate(cert_der, default_backend())
+
+                # 检查是否为自签名证书
+                if _is_self_signed(cert):
+                    result["issues"].append("证书为自签名")
+                    result["status"] = "error"
+
+                # 检查证书过期时间
+                expiry_date = cert.not_valid_after_utc if hasattr(cert, 'not_valid_after_utc') else cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+                now = datetime.datetime.now(datetime.timezone.utc)
+                days_left = (expiry_date - now).days
+                expired = expiry_date < now
+
+                result["expiry"] = {
+                    "expired": expired,
+                    "days_left": days_left,
+                    "expire_date": expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+                }
+
+                if expired and "证书为自签名" not in result["issues"]:
+                    result["issues"].append("证书已过期")
+                    result["status"] = "error"
+                elif "证书为自签名" not in result["issues"]:
+                    result["issues"].append("证书验证失败")
+                    result["status"] = "error"
+            else:
+                result["issues"].append("证书验证失败")
+                result["status"] = "error"
+        except Exception:
+            result["issues"].append("证书验证失败")
+            result["status"] = "error"
     except Exception as e:
         result["issues"].append("检测失败")
         result["status"] = "error"
