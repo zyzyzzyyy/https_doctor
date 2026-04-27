@@ -366,8 +366,15 @@ def check_certificate(url: str) -> dict:
                     result["issues"].append("证书已过期")
                     result["status"] = "error"
                 elif "证书为自签名" not in result["issues"]:
-                    result["issues"].append("证书验证失败")
-                    result["status"] = "error"
+                    # 判断是否为根证书缺失的环境问题
+                    error_msg = str(e).lower()
+                    if "unable to get local issuer" in error_msg or "unable to find" in error_msg:
+                        # 根证书缺失，服务器未发送完整证书链
+                        result["issues"].append("证书链不完整")
+                        result["status"] = "warning"
+                    else:
+                        result["issues"].append("证书验证失败")
+                        result["status"] = "error"
             else:
                 result["issues"].append("证书验证失败")
                 result["status"] = "error"
