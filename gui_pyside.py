@@ -883,8 +883,12 @@ class MainWindow(QMainWindow):
             type_labels = {"root": "Root CA", "intermediate": "Intermediate", "server": "Server"}
             label = type_labels.get(cert_type, cert_type)
 
-            icon = "✅" if cert_status == "ok" else "❌"
-            lines.append(f"├── {label}: {cert_name} {icon}")
+            if cert_status == "ok":
+                icon = "✅"
+                lines.append(f"├── {label}: {cert_name} {icon}")
+            else:
+                icon = "❌"
+                lines.append(f"├── {label}: {cert_name} {icon}")
 
         chain_status = "完整 ✅" if cert_chain_complete else "不完整 ❌"
         lines.append(f"\n证书链状态: {chain_status}")

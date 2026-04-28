@@ -157,6 +157,25 @@ def check_certificate(url: str) -> dict:
                             "name": root_name,
                             "status": "ok"
                         })
+                else:
+                    # 中间证书存在但无法获取根证书
+                    cert_chain.append({
+                        "type": "root",
+                        "name": "Root CA (未获取到)",
+                        "status": "missing"
+                    })
+            else:
+                # 无法获取中间证书
+                cert_chain.append({
+                    "type": "intermediate",
+                    "name": "Intermediate CA (未获取到)",
+                    "status": "missing"
+                })
+                cert_chain.append({
+                    "type": "root",
+                    "name": "Root CA (未获取到)",
+                    "status": "missing"
+                })
         except (AttributeError, Exception):
             pass
 
@@ -344,6 +363,75 @@ def check_certificate(url: str) -> dict:
             if cert_data:
                 cert_der, tls_version, cipher_suite = cert_data
                 cert = x509.load_der_x509_certificate(cert_der, default_backend())
+
+                # 构建证书链信息
+                cert_chain = []
+                try:
+                    # 添加服务器证书
+                    server_name = _get_cert_name(cert)
+                    cert_chain.append({
+                        "type": "server",
+                        "name": server_name,
+                        "status": "ok"
+                    })
+
+                    # 尝试通过 AIA 获取中间证书
+                    issuer_cert = _get_issuer_from_aia(cert, host)
+                    if issuer_cert is not None:
+                        issuer_type = _get_cert_type(issuer_cert)
+                        issuer_name = _get_cert_name(issuer_cert)
+                        if issuer_name != server_name:
+                            cert_chain.append({
+                                "type": issuer_type,
+                                "name": issuer_name,
+                                "status": "ok"
+                            })
+                        # 尝试获取根证书
+                        root_issuer = _get_issuer_from_aia(issuer_cert, host)
+                        if root_issuer is not None:
+                            root_type = _get_cert_type(root_issuer)
+                            root_name = _get_cert_name(root_issuer)
+                            if root_name != issuer_name and root_name != server_name:
+                                cert_chain.append({
+                                    "type": root_type,
+                                    "name": root_name,
+                                    "status": "ok"
+                                })
+                        else:
+                            # 中间证书存在但无法获取根证书
+                            cert_chain.append({
+                                "type": "root",
+                                "name": "Root CA (未获取到)",
+                                "status": "missing"
+                            })
+                    else:
+                        # 无法获取中间证书
+                        cert_chain.append({
+                            "type": "intermediate",
+                            "name": "Intermediate CA (未获取到)",
+                            "status": "missing"
+                        })
+                        cert_chain.append({
+                            "type": "root",
+                            "name": "Root CA (未获取到)",
+                            "status": "missing"
+                        })
+                except (AttributeError, Exception):
+                    pass
+
+                # 确保至少包含服务器证书
+                if not cert_chain:
+                    cert_chain.append({
+                        "type": "server",
+                        "name": _get_cert_name(cert),
+                        "status": "ok"
+                    })
+
+                result["cert_chain"] = cert_chain
+                has_root = any(c["type"] == "root" for c in cert_chain)
+                has_intermediate = any(c["type"] == "intermediate" for c in cert_chain)
+                has_server = any(c["type"] == "server" for c in cert_chain)
+                result["cert_chain_complete"] = (has_root or has_intermediate) and has_server
 
                 # 检查是否为自签名证书
                 if _is_self_signed(cert):
